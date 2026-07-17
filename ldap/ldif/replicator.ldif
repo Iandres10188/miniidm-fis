@@ -1,0 +1,6 @@
+dn: cn=replicator,dc=fis,dc=epn,dc=ec
+objectClass: simpleSecurityObject
+objectClass: organizationalRole
+cn: replicator
+description: Cuenta de replicacion LDAP
+userPassword: grep -v userPassword ldap/ldif/replicator.ldif
