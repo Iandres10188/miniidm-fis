@@ -1,0 +1,6 @@
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature,keyAgreement
+extendedKeyUsage=serverAuth
+subjectKeyIdentifier=hash
+authorityKeyIdentifier=keyid,issuer
+subjectAltName=DNS:ldap2.fis.epn.edu.ec,DNS:ldap2,DNS:ldap.fis.epn.edu.ec
