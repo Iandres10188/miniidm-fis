@@ -1,0 +1,324 @@
+services:
+  pki:
+    build:
+      context: ./pki
+    environment:
+      CA_KEY_PASSWORD: ${CA_KEY_PASSWORD}
+    volumes:
+      - ./pki:/work
+
+  kdc1:
+    build:
+      context: ./kerberos
+    hostname: kdc1.fis.epn.edu.ec
+    environment:
+      KRB_REALM: ${KRB_REALM}
+      KRB_MASTER_PASSWORD: ${KRB_MASTER_PASSWORD}
+      KRB_ADMIN_PASSWORD: ${KRB_ADMIN_PASSWORD}
+      KRB_USER_PASSWORD: ${KRB_USER_PASSWORD}
+    volumes:
+      - ./kerberos/keytabs/kdc1.keytab:/replica-keytabs/kdc1.keytab:ro
+      - kdc1_database:/var/lib/krb5kdc
+      - ./kerberos/keytabs:/keytabs
+    networks:
+      fisnet:
+        aliases:
+          - kdc1
+          - kdc1.fis.epn.edu.ec
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 88"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    stop_grace_period: 10s
+
+  kdc2:
+    build:
+      context: ./kerberos
+      dockerfile: Dockerfile.kdc2
+    hostname: kdc2.fis.epn.edu.ec
+    environment:
+      KRB_REALM: ${KRB_REALM}
+    volumes:
+      - ./kerberos/config/krb5.conf:/etc/krb5.conf:ro
+      - ./kerberos/config/kdc.conf:/etc/krb5kdc/kdc.conf:ro
+      - ./kerberos/config/kadm5.acl:/etc/krb5kdc/kadm5.acl:ro
+      - ./kerberos/config/kpropd.acl:/etc/krb5kdc/kpropd.acl:ro
+      - ./kerberos/keytabs/kdc2.keytab:/bootstrap/kdc2.keytab:ro
+      - type: bind
+        source: ./kerberos/replica-bootstrap/stash
+        target: /bootstrap/stash
+        read_only: true
+        bind:
+          create_host_path: false
+      - ./kerberos/state/kdc2:/var/lib/krb5kdc
+    networks:
+      fisnet:
+        aliases:
+          - kdc2
+          - kdc2.fis.epn.edu.ec
+    expose:
+      - "88/tcp"
+      - "88/udp"
+      - "754/tcp"
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pgrep -x krb5kdc >/dev/null && pgrep -x kpropd >/dev/null
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  ldap1:
+    build:
+      context: ./ldap
+    hostname: ldap1.fis.epn.edu.ec
+    environment:
+      LDAP_DOMAIN: ${LDAP_DOMAIN}
+      LDAP_BASE_DN: ${LDAP_BASE_DN}
+      LDAP_ADMIN_PASSWORD: ${LDAP_ADMIN_PASSWORD}
+      KRB_REALM: ${KRB_REALM}
+    volumes:
+      - ldap1_database:/var/lib/ldap
+      - ldap1_config:/etc/ldap/slapd.d
+      - ./kerberos/config/krb5.conf:/etc/krb5.conf:ro
+      - ./kerberos/keytabs/ldap1.keytab:/keytabs/ldap1.keytab:ro
+      - ./pki/out/certs/ldap1.cert.pem:/certificates/server.cert.pem:ro
+      - ./pki/out/private/ldap1.key.pem:/certificates/server.key.pem:ro
+      - ./pki/out/certs/fis-root-ca.cert.pem:/certificates/ca.cert.pem:ro
+    networks:
+      fisnet:
+        aliases:
+          - ldap1
+          - ldap1.fis.epn.edu.ec
+    depends_on:
+      kdc1:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 636"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+    ports:
+      - "1389:389"
+      - "1636:636"
+    stop_grace_period: 10s
+
+  ldap2:
+    build:
+      context: ./ldap
+    hostname: ldap2.fis.epn.edu.ec
+    environment:
+      LDAP_ROLE: consumer
+      LDAP_DOMAIN: ${LDAP_DOMAIN}
+      LDAP_BASE_DN: ${LDAP_BASE_DN}
+      LDAP_ADMIN_PASSWORD: ${LDAP_ADMIN_PASSWORD}
+      KRB_REALM: ${KRB_REALM}
+    volumes:
+      - ldap2_database:/var/lib/ldap
+      - ldap2_config:/etc/ldap/slapd.d
+      - ./kerberos/config/krb5.conf:/etc/krb5.conf:ro
+      - ./kerberos/keytabs/ldap2.keytab:/keytabs/ldap1.keytab:ro
+      - ./pki/out/certs/ldap2.cert.pem:/certificates/server.cert.pem:ro
+      - ./pki/out/private/ldap2.key.pem:/certificates/server.key.pem:ro
+      - ./pki/out/certs/fis-root-ca.cert.pem:/certificates/ca.cert.pem:ro
+    networks:
+      fisnet:
+        aliases:
+          - ldap2
+          - ldap2.fis.epn.edu.ec
+    depends_on:
+      kdc1:
+        condition: service_healthy
+      ldap1:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 636"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+    ports:
+      - "2389:389"
+      - "2636:636"
+    stop_grace_period: 10s
+
+  haproxy:
+    image: haproxy:3.0-alpine
+    hostname: ldap.fis.epn.edu.ec
+    volumes:
+      - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    networks:
+      fisnet:
+        aliases:
+          - ldap
+          - ldap.fis.epn.edu.ec
+    depends_on:
+      ldap1:
+        condition: service_healthy
+      ldap2:
+        condition: service_healthy
+    ports:
+      - "3636:636"
+      - "8404:8404"
+    healthcheck:
+      test:
+        - CMD
+        - haproxy
+        - -c
+        - -f
+        - /usr/local/etc/haproxy/haproxy.cfg
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    hostname: web.fis.epn.edu.ec
+    volumes:
+      - ./kerberos/config/krb5.conf:/etc/krb5.conf:ro
+      - ./kerberos/keytabs/web.keytab:/bootstrap/web.keytab:ro
+      - ./web/tls/web.cert.pem:/etc/apache2/tls/web.cert.pem:ro
+      - ./web/tls/web.key.pem:/etc/apache2/tls/web.key.pem:ro
+    networks:
+      fisnet:
+        aliases:
+          - web
+          - web.fis.epn.edu.ec
+    ports:
+      - "8443:443"
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - curl -kfsS https://127.0.0.1/ >/dev/null || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  cadvisor:
+    image: ghcr.io/google/cadvisor:v0.55.1
+    hostname: cadvisor
+    privileged: true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:rw
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+    networks:
+      fisnet:
+        aliases:
+          - cadvisor
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  blackbox:
+    image: quay.io/prometheus/blackbox-exporter:v0.28.0
+    hostname: blackbox
+    command:
+      - --config.file=/etc/blackbox_exporter/blackbox.yml
+    volumes:
+      - ./monitoring/blackbox.yml:/etc/blackbox_exporter/blackbox.yml:ro
+      - ./web/tls/ca.cert.pem:/etc/blackbox_exporter/ca.cert.pem:ro
+    networks:
+      fisnet:
+        aliases:
+          - blackbox
+    ports:
+      - "9115:9115"
+    restart: unless-stopped
+
+  miniidm-exporter:
+    build:
+      context: ./monitoring/exporter
+      dockerfile: Dockerfile
+    hostname: miniidm-exporter
+    environment:
+      LDAP_BASE_DN: ${LDAP_BASE_DN}
+      KRB_REALM: ${KRB_REALM}
+    volumes:
+      - ./kerberos/keytabs/monitor.keytab:/keytabs/monitor.keytab:ro
+      - ./web/tls/ca.cert.pem:/etc/miniidm/ca.cert.pem:ro
+    networks:
+      fisnet:
+        aliases:
+          - miniidm-exporter
+    ports:
+      - "9120:9120"
+    depends_on:
+      - ldap1
+      - ldap2
+      - kdc1
+      - kdc2
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - curl -fsS http://127.0.0.1:9120/healthz >/dev/null
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  prometheus:
+    image: prom/prometheus:v3.13.0
+    hostname: prometheus
+    user: "0:0"
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+      - --web.enable-lifecycle
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - ./monitoring/prometheus-data:/prometheus
+    networks:
+      fisnet:
+        aliases:
+          - prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      - cadvisor
+      - blackbox
+      - miniidm-exporter
+      - haproxy
+    restart: unless-stopped
+
+  client:
+    build:
+      context: ./client
+    hostname: client.fis.epn.edu.ec
+    command: ["sleep", "infinity"]
+    volumes:
+      - ./kerberos/config/krb5.conf:/etc/krb5.conf:ro
+      - ./pki/out:/pki:ro
+    networks:
+      fisnet:
+        aliases:
+          - client
+          - client.fis.epn.edu.ec
+    depends_on:
+      kdc1:
+        condition: service_healthy
+
+networks:
+  fisnet:
+    driver: bridge
+
+volumes:
+  kdc1_database:
+  ldap1_database:
+  ldap1_config:
+  ldap2_database:
+  ldap2_config:
