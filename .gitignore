@@ -1,0 +1,42 @@
+# Variables y contraseñas
+.env
+
+# Llaves privadas de la PKI
+pki/out/private/
+pki/out/*.srl
+# Keytabs de Kerberos
+kerberos/keytabs/*
+!kerberos/keytabs/.gitkeep
+# Bases de datos y archivos temporales
+data/
+results/*.tmp
+# Certificados personales
+OnateI.key
+OnateI.crt
+OnateI.csr
+OnateI.pfx
+ca.crt
+# Estado y secretos del KDC secundario
+kerberos/state/
+kerberos/replica-bootstrap/
+kerberos/keytabs/*.keytab
+web/tls/*.key.pem
+monitoring/prometheus-data/
+monitoring/grafana-data/
+# Variables y credenciales
+.env.*
+!.env.example
+# Claves privadas y keytabs
+*.key
+*.key.pem
+*.keytab
+**/stash
+**/.k5.*
+# Estado sensible de Kerberos
+# Claves privadas PKI
+# Bases de datos de monitoreo
+# Archivos temporales
+__pycache__/
+*.pyc
+*.swp
+.DS_Store
